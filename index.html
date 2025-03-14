@@ -1,1 +1,264 @@
-helloworld
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminal Kit Creator</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .image-container {
+            display: flex;
+            width: 90%;
+            overflow-x: auto;
+            margin-bottom: 20px;
+        }
+
+        .image-container img {
+            width: 100px;
+            height: 100px;
+            margin: 5px;
+            cursor: pointer;
+        }
+
+        .canvas-container {
+            max-width: 600px;
+            position: relative;
+            padding-left: 10%;
+            padding-right: 10%;
+            padding-top: 5px;
+            padding-bottom: 5px;
+        }
+
+        canvas {
+            width: 100%;
+            height: auto;
+            border: 1px solid #000;
+        }
+    </style>
+</head>
+<body>
+    <div class="image-container">
+    </div>
+    <div class="canvas-container">
+        <canvas id="canvas" width="1000" height="1000"></canvas>
+    </div>
+    <button id="undo">Undo</button>
+    <button id="redo">Redo</button>
+    <button id="export">Export as PNG</button>
+    <script>
+        const imageContainer = document.querySelector('.image-container');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const undoStack = [];
+        const redoStack = [];
+        const imagesOnCanvas = [];
+        const initialOffsets = { x: 308, y: -114 }; 
+        const subsequentOffsets = { x: 130, y: 51 }; 
+        const endCapOffset = { x: 32, y: -90 }; 
+        const endStopClampRightOffset = { x: 135, y: 310 }; 
+
+        let firstDINAdded = false;
+        let firstDINPosition = { x: 0, y: 0 };
+        let secondDINPosition = { x: 438, y: -63 }; 
+        let endCapAdded = false;
+        let endStopClampRightAdded = false;
+
+        const preloadedImages = [
+            "https://raw.githubusercontent.com/willholdsworth/Terminal-Kit-Creator/main/IMAGES/Terminal%20End%20Stop%20Clamp%20-%20Left.png",
+        ];
+
+        preloadedImages.forEach((src, index) => {
+            const tempImg = new Image();
+            tempImg.src = src;
+            tempImg.crossOrigin = "anonymous";
+            tempImg.onload = () => {
+                const x = 0;
+                const y = 0; 
+                imagesOnCanvas.push({ img: tempImg, x, y, width: tempImg.width, height: tempImg.height, zIndex: index });
+                redrawCanvas();
+            };
+        });
+
+		fetch('https://api.github.com/repos/willholdsworth/Terminal-Kit-Creator/contents/IMAGES')
+			.then(response => response.json())
+			.then(data => {
+				data.forEach(file => {
+					if (file.type === 'file' && !file.name.includes('Terminal End Cap') && !file.name.includes('Terminal End Stop Clamp - Left') && !file.name.includes('Terminal End Stop Clamp - Right')) {
+						const img = document.createElement('img');
+						img.src = file.download_url;
+						img.crossOrigin = "anonymous"; 
+						img.addEventListener('click', () => addImageToCanvas(img.src));
+						imageContainer.appendChild(img);
+					}
+				});
+			});
+
+        function addImageToCanvas(src) {
+            undoStack.push(canvas.toDataURL());
+            redoStack.length = 0; 
+            const tempImg = new Image();
+            tempImg.src = src;
+            tempImg.crossOrigin = "anonymous"; 
+            tempImg.onload = () => {
+                let x, y;
+
+                const dinCount = imagesOnCanvas.filter(image => !image.img.src.includes("Terminal%20End%20Cap.png") && !image.img.src.includes("Terminal%20End%20Stop%20Clamp%20-%20Right.png")).length;
+
+                if (firstDINAdded) {
+                    if (dinCount === 1) {
+                        x = secondDINPosition.x;
+                        y = secondDINPosition.y;
+                    } else {
+                        x = firstDINPosition.x + subsequentOffsets.x * (dinCount - 1);
+                        y = firstDINPosition.y + subsequentOffsets.y * (dinCount - 1);
+                    }
+                } else {
+                    x = initialOffsets.x;
+                    y = initialOffsets.y;
+                    firstDINPosition = { x, y };
+                    firstDINAdded = true;
+                }
+
+                const zIndex = src.includes("Terminal%20End%20Stop%20Clamp%20-%20Left.png") ? 1 : 2;
+
+                imagesOnCanvas.push({ img: tempImg, x, y, width: tempImg.width, height: tempImg.height, zIndex });
+                redrawCanvas();
+
+                if (endCapAdded) {
+                    repositionEndCap(x, y);
+                } else {
+                    addEndCap(x, y);
+                    endCapAdded = true;
+                }
+
+                if (endStopClampRightAdded) {
+                    repositionEndStopClampRight(x, y);
+                } else {
+                    addEndStopClampRight(x, y);
+                    endStopClampRightAdded = true;
+                }
+            };
+        }
+
+        function addEndCap(lastDINX, lastDINY) {
+            const endCapSrc = "https://raw.githubusercontent.com/willholdsworth/Terminal-Kit-Creator/main/IMAGES/Terminal%20End%20Cap.png";
+            const endCapImg = new Image();
+            endCapImg.src = endCapSrc;
+            endCapImg.crossOrigin = "anonymous";
+            endCapImg.onload = () => {
+                const x = lastDINX + endCapOffset.x;
+                const y = lastDINY + endCapOffset.y;
+                imagesOnCanvas.push({ img: endCapImg, x, y, width: endCapImg.width, height: endCapImg.height, zIndex: 4 });
+                redrawCanvas();
+            };
+        }
+
+        function repositionEndCap(lastDINX, lastDINY) {
+            const x = lastDINX + endCapOffset.x;
+            const y = lastDINY + endCapOffset.y;
+
+            const endCapIndex = imagesOnCanvas.findIndex(image => image.img.src.includes("Terminal%20End%20Cap.png"));
+            if (endCapIndex !== -1) {
+                imagesOnCanvas[endCapIndex].x = x;
+                imagesOnCanvas[endCapIndex].y = y;
+                redrawCanvas();
+            }
+        }
+
+        function addEndStopClampRight(lastDINX, lastDINY) {
+            const endStopClampRightSrc = "https://raw.githubusercontent.com/willholdsworth/Terminal-Kit-Creator/main/IMAGES/Terminal%20End%20Stop%20Clamp%20-%20Right.png";
+            const endStopClampRightImg = new Image();
+            endStopClampRightImg.src = endStopClampRightSrc;
+            endStopClampRightImg.crossOrigin = "anonymous";
+            endStopClampRightImg.onload = () => {
+                const x = lastDINX + endCapOffset.x + endStopClampRightOffset.x;
+                const y = lastDINY + endCapOffset.y + endStopClampRightOffset.y;
+                imagesOnCanvas.push({ img: endStopClampRightImg, x, y, width: endStopClampRightImg.width, height: endStopClampRightImg.height, zIndex: 5 });
+                redrawCanvas();
+            };
+        }
+
+        function repositionEndStopClampRight(lastDINX, lastDINY) {
+            const x = lastDINX + endCapOffset.x + endStopClampRightOffset.x;
+            const y = lastDINY + endCapOffset.y + endStopClampRightOffset.y;
+
+            const endStopClampRightIndex = imagesOnCanvas.findIndex(image => image.img.src.includes("Terminal%20End%20Stop%20Clamp%20-%20Right.png"));
+            if (endStopClampRightIndex !== -1) {
+                imagesOnCanvas[endStopClampRightIndex].x = x;
+                imagesOnCanvas[endStopClampRightIndex].y = y;
+                redrawCanvas();
+            }
+        }
+
+        function redrawCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); 
+
+            const boundingBox = imagesOnCanvas.reduce((box, { x, y, width, height }) => {
+                return {
+                    left: Math.min(box.left, x),
+                    top: Math.min(box.top, y),
+                    right: Math.max(box.right, x + width),
+                    bottom: Math.max(box.bottom, y + height)
+                };
+            }, { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
+
+            const boxWidth = boundingBox.right - boundingBox.left;
+            const boxHeight = boundingBox.bottom - boundingBox.top;
+
+            const scaleFactor = Math.min(canvas.width / boxWidth, canvas.height / boxHeight);
+
+            const centerX = (canvas.width - boxWidth * scaleFactor) / 2;
+            const centerY = (canvas.height - boxHeight * scaleFactor) / 2;
+
+            imagesOnCanvas.sort((a, b) => a.zIndex - b.zIndex).forEach(({ img, x, y, width, height }) => {
+                const scaledX = centerX + (x - boundingBox.left) * scaleFactor;
+                const scaledY = centerY + (y - boundingBox.top) * scaleFactor;
+                const scaledWidth = width * scaleFactor;
+                const scaledHeight = height * scaleFactor;
+                ctx.drawImage(img, scaledX, scaledY, scaledWidth, scaledHeight);
+            });
+        }
+
+        function undo() {
+            if (undoStack.length > 0) {
+                redoStack.push(canvas.toDataURL());
+                const lastState = undoStack.pop();
+                const img = new Image();
+                img.src = lastState;
+                img.onload = () => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0);
+                };
+            }
+        }
+
+        function redo() {
+            if (redoStack.length > 0) {
+                undoStack.push(canvas.toDataURL());
+                const nextState = redoStack.pop();
+                const img = new Image();
+                img.src = nextState;
+                img.onload = () => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0);
+                };
+            }
+        }
+
+        document.getElementById('undo').addEventListener('click', undo);
+        document.getElementById('redo').addEventListener('click', redo);
+
+        document.getElementById('export').addEventListener('click', () => {
+            const link = document.createElement('a');
+            link.download = 'terminal-kit.png';
+            link.href = canvas.toDataURL();
+            link.click();
+        });
+    </script>
+</body>
+</html>
