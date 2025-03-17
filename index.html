@@ -47,218 +47,445 @@
     <div class="canvas-container">
         <canvas id="canvas" width="1000" height="1000"></canvas>
     </div>
-    <button id="undo">Undo</button>
-    <button id="redo">Redo</button>
-    <button id="export">Export as PNG</button>
+	<button id="invert">Invert Jumper Position</button>
+	<button id="undo">Undo</button>
+	<button id="redo">Redo</button>
+	<button id="export">Export as PNG</button>
     <script>
-        const imageContainer = document.querySelector('.image-container');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        const undoStack = [];
-        const redoStack = [];
-        const imagesOnCanvas = [];
-        const initialOffsets = { x: 308, y: -114 }; 
-        const subsequentOffsets = { x: 130, y: 51 }; 
-        const endCapOffset = { x: 32, y: -90 }; 
-        const endStopClampRightOffset = { x: 135, y: 310 }; 
+const imageContainer = document.querySelector('.image-container');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const undoStack = [];
+const redoStack = [];
+const imagesOnCanvas = [];
+const initialOffsets = { x: 308, y: -114 }; 
+const subsequentOffsets = { x: 130, y: 51 }; 
+const endCapOffset = { x: 32, y: -90 }; 
+const endStopClampRightOffset = { x: 135, y: 310 }; 
+const jumperOffsets = { 
+    '2Pole': { 
+        position1: { x: 170, y: -500 }, 
+        position2: { x: 128, y: -432 } 
+    }, 
+    '4Pole': { 
+        position1: { x: 310, y: -455 }, 
+        position2: { x: 254, y: -390 } 
+    } 
+};
 
-        let firstDINAdded = false;
-        let firstDINPosition = { x: 0, y: 0 };
-        let secondDINPosition = { x: 438, y: -63 }; 
-        let endCapAdded = false;
-        let endStopClampRightAdded = false;
+let firstDINAdded = false;
+let firstDINPosition = { x: 0, y: 0 };
+let secondDINPosition = { x: 438, y: -63 }; 
+let endCapAdded = false;
+let endStopClampRightAdded = false;
 
-        const preloadedImages = [
-            "https://raw.githubusercontent.com/willholdsworth/Terminal-Kit-Creator/main/IMAGES/Terminal%20End%20Stop%20Clamp%20-%20Left.png",
-        ];
+const preloadedImages = [
+    "https://raw.githubusercontent.com/willholdsworth/Terminal-Kit-Creator/main/IMAGES/Terminal%20End%20Stop%20Clamp%20-%20Left.png",
+];
 
-        preloadedImages.forEach((src, index) => {
-            const tempImg = new Image();
-            tempImg.src = src;
-            tempImg.crossOrigin = "anonymous";
-            tempImg.onload = () => {
-                const x = 0;
-                const y = 0; 
-                imagesOnCanvas.push({ img: tempImg, x, y, width: tempImg.width, height: tempImg.height, zIndex: index });
-                redrawCanvas();
-            };
+preloadedImages.forEach((src, index) => {
+    const tempImg = new Image();
+    tempImg.src = src;
+    tempImg.crossOrigin = "anonymous";
+    tempImg.onload = () => {
+        const x = 0;
+        const y = 0; 
+        imagesOnCanvas.push({ img: tempImg, x, y, width: tempImg.width, height: tempImg.height, zIndex: index });
+        redrawCanvas();
+    };
+});
+
+fetch('https://api.github.com/repos/willholdsworth/Terminal-Kit-Creator/contents/IMAGES')
+    .then(response => response.json())
+    .then(data => {
+        data.forEach(file => {
+            if (file.type === 'file' && 
+                !file.name.includes('Terminal End Cap') && 
+                !file.name.includes('Terminal End Stop Clamp - Left') && 
+                !file.name.includes('Terminal End Stop Clamp - Right')) {
+                const img = document.createElement('img');
+                img.src = file.download_url;
+                img.crossOrigin = "anonymous";
+                img.dataset.type = file.name.includes('2%20Pole%20Jumper') ? '2Pole' : file.name.includes('4%20Pole%20Jumper') ? '4Pole' : 'terminal';
+                img.addEventListener('click', () => addImageToCanvas(img.src));
+                imageContainer.appendChild(img);
+            }
+        });
+        updateJumperAvailability();
+    });
+
+function addImageToCanvas(src) {
+    undoStack.push(cloneState(imagesOnCanvas, endCapAdded, endStopClampRightAdded, firstDINAdded, firstDINPosition));
+    redoStack.length = 0;
+    const tempImg = new Image();
+    tempImg.src = src;
+    tempImg.crossOrigin = "anonymous";
+    tempImg.onload = () => {
+        let x, y, zIndex, position = null, baseX = null, baseY = null, slots = null;
+
+        const dinCount = imagesOnCanvas.filter(image => 
+            !image.img.src.includes("Terminal%20End%20Cap.png") && 
+            !image.img.src.includes("Terminal%20End%20Stop%20Clamp%20-%20Right.png") &&
+            !image.img.src.includes("Pole%20Jumper.png")
+        ).length;
+
+        if (src.includes("2%20Pole%20Jumper.png") || src.includes("4%20Pole%20Jumper.png")) {
+            const is2Pole = src.includes("2%20Pole%20Jumper.png");
+            const minTerminals = is2Pole ? 2 : 4;
+            if (dinCount < minTerminals) {
+                alert(`Need at least ${minTerminals} terminals to place a ${is2Pole ? '2' : '4'} Pole Jumper.`);
+                return;
+            }
+
+            const jumperType = is2Pole ? '2Pole' : '4Pole';
+            const terminalSpan = is2Pole ? 2 : 4;
+            const lastDINIndex = dinCount - 1;
+            const startTerminal = imagesOnCanvas.find(image => 
+                !image.img.src.includes("Terminal%20End%20Cap.png") && 
+                !image.img.src.includes("Terminal%20End%20Stop%20Clamp%20-%20Right.png") &&
+                !image.img.src.includes("Pole%20Jumper.png")
+            );
+
+            baseX = startTerminal.x + subsequentOffsets.x * (lastDINIndex - terminalSpan + 1);
+            baseY = startTerminal.y + subsequentOffsets.y * (lastDINIndex - terminalSpan + 1);
+            slots = Array.from({ length: terminalSpan }, (_, i) => lastDINIndex - terminalSpan + 1 + i);
+
+            position = 'position1';
+            const lastJumper = imagesOnCanvas.filter(img => img.img.src.includes("Pole%20Jumper.png")).pop();
+            if (!lastJumper) position = 'position1'; // Default to Position 1 for first jumper
+            else {
+                const lastPosition = lastJumper.y === (lastJumper.baseY + jumperOffsets[jumperType].position1.y) ? 'position1' : 'position2';
+                position = lastPosition === 'position1' ? 'position2' : 'position1';
+            }
+
+            if (!canPlaceJumper(slots, position)) {
+                position = position === 'position1' ? 'position2' : 'position1';
+                if (!canPlaceJumper(slots, position)) {
+                    alert(`Cannot place ${is2Pole ? '2' : '4'} Pole Jumper; both tracks are occupied for these slots.`);
+                    return;
+                }
+            }
+
+            x = baseX + jumperOffsets[jumperType][position].x;
+            y = baseY + jumperOffsets[jumperType][position].y;
+            zIndex = position === 'position1' ? 3 : 4;
+        } else {
+            if (firstDINAdded) {
+                if (dinCount === 1) {
+                    x = secondDINPosition.x;
+                    y = secondDINPosition.y;
+                } else {
+                    x = firstDINPosition.x + subsequentOffsets.x * (dinCount - 1);
+                    y = firstDINPosition.y + subsequentOffsets.y * (dinCount - 1);
+                }
+            } else {
+                x = initialOffsets.x;
+                y = initialOffsets.y;
+                firstDINPosition = { x, y };
+                firstDINAdded = true;
+            }
+            zIndex = src.includes("Terminal%20End%20Stop%20Clamp%20-%20Left.png") ? 1 : 2;
+
+            if (endCapAdded) repositionEndCap(x, y);
+            else { addEndCap(x, y); endCapAdded = true; }
+
+            if (endStopClampRightAdded) repositionEndStopClampRight(x, y);
+            else { addEndStopClampRight(x, y); endStopClampRightAdded = true; }
+        }
+
+        imagesOnCanvas.push({ 
+            img: tempImg, 
+            x, 
+            y, 
+            width: tempImg.width, 
+            height: tempImg.height, 
+            zIndex, 
+            ...(position ? { baseX, baseY, slots } : {})
+        });
+        redrawCanvas();
+        updateJumperAvailability();
+    };
+}
+
+function canPlaceJumper(slots, position, excludeJumpers = []) {
+    const excludes = Array.isArray(excludeJumpers) ? excludeJumpers : [excludeJumpers];
+    return !imagesOnCanvas.some(img => 
+        !excludes.includes(img) &&
+        img.img.src.includes("Pole%20Jumper.png") &&
+        img.slots.some(slot => slots.includes(slot)) &&
+        ((position === 'position1' && img.y === (img.baseY + jumperOffsets[img.img.src.includes("2%20Pole") ? '2Pole' : '4Pole'].position1.y)) ||
+         (position === 'position2' && img.y === (img.baseY + jumperOffsets[img.img.src.includes("2%20Pole") ? '2Pole' : '4Pole'].position2.y)))
+    );
+}
+
+function updateJumperAvailability() {
+    const dinCount = imagesOnCanvas.filter(image => 
+        !image.img.src.includes("Terminal%20End%20Cap.png") && 
+        !image.img.src.includes("Terminal%20End%20Stop%20Clamp%20-%20Right.png") &&
+        !image.img.src.includes("Pole%20Jumper.png")
+    ).length;
+
+    const jumperImages = imageContainer.querySelectorAll('img[data-type="2Pole"], img[data-type="4Pole"]');
+    jumperImages.forEach(img => {
+        const is2Pole = img.dataset.type === '2Pole';
+        const minTerminals = is2Pole ? 2 : 4;
+        if (dinCount < minTerminals) {
+            img.style.filter = 'grayscale(100%)';
+            img.style.pointerEvents = 'none';
+            return;
+        }
+
+        const lastDINIndex = dinCount - 1;
+        const slots = Array.from({ length: minTerminals }, (_, i) => lastDINIndex - minTerminals + 1 + i);
+        const canPlacePos1 = canPlaceJumper(slots, 'position1');
+        const canPlacePos2 = canPlaceJumper(slots, 'position2');
+
+        if (!canPlacePos1 && !canPlacePos2) {
+            img.style.filter = 'grayscale(100%)';
+            img.style.pointerEvents = 'none';
+        } else {
+            img.style.filter = 'none';
+            img.style.pointerEvents = 'auto';
+        }
+    });
+}
+
+
+function getPosition(jumper) {
+    const type = jumper.img.src.includes("2%20Pole") ? '2Pole' : '4Pole';
+    if (jumper.y === jumper.baseY + jumperOffsets[type].position1.y) {
+        return 'position1';
+    } else if (jumper.y === jumper.baseY + jumperOffsets[type].position2.y) {
+        return 'position2';
+    }
+    return null; 
+}
+
+function findConflictingJumpers(position, slots) {
+    return imagesOnCanvas.filter(j => 
+        j.img.src.includes("Pole%20Jumper.png") &&
+        getPosition(j) === position &&
+        j.slots.some(slot => slots.includes(slot))
+    );
+}
+
+function invertJumper(jumper) {
+    const type = jumper.img.src.includes("2%20Pole") ? '2Pole' : '4Pole';
+    const currentPosition = getPosition(jumper);
+    const newPosition = currentPosition === 'position1' ? 'position2' : 'position1';
+    jumper.x = jumper.baseX + jumperOffsets[type][newPosition].x;
+    jumper.y = jumper.baseY + jumperOffsets[type][newPosition].y;
+    jumper.zIndex = newPosition === 'position1' ? 3 : 4;
+}
+
+function invertJumperPosition() {
+    const jumpers = imagesOnCanvas.filter(img => img.img.src.includes("Pole%20Jumper.png"));
+    if (jumpers.length === 0) return;
+
+    undoStack.push(cloneState(imagesOnCanvas, endCapAdded, endStopClampRightAdded, firstDINAdded, firstDINPosition));
+    redoStack.length = 0;
+
+    const lastJumper = jumpers[jumpers.length - 1];
+    const jumperType = lastJumper.img.src.includes("2%20Pole%20Jumper.png") ? '2Pole' : '4Pole';
+    const currentPosition = lastJumper.y === (lastJumper.baseY + jumperOffsets[jumperType].position1.y) ? 'position1' : 'position2';
+    const newPosition = currentPosition === 'position1' ? 'position2' : 'position1';
+
+    const newX = lastJumper.baseX + jumperOffsets[jumperType][newPosition].x;
+    const newY = lastJumper.baseY + jumperOffsets[jumperType][newPosition].y;
+
+    if (canPlaceJumper(lastJumper.slots, newPosition, lastJumper)) {
+        lastJumper.x = newX;
+        lastJumper.y = newY;
+        lastJumper.zIndex = newPosition === 'position1' ? 3 : 4;
+    } else {
+        const conflictingJumpers = jumpers.slice(0, -1).filter(jumper => {
+            const prevJumperType = jumper.img.src.includes("2%20Pole%20Jumper.png") ? '2Pole' : '4Pole';
+            const prevPosition = jumper.y === (jumper.baseY + jumperOffsets[prevJumperType].position1.y) ? 'position1' : 'position2';
+            return prevPosition === newPosition && lastJumper.slots.some(slot => jumper.slots.includes(slot));
         });
 
-		fetch('https://api.github.com/repos/willholdsworth/Terminal-Kit-Creator/contents/IMAGES')
-			.then(response => response.json())
-			.then(data => {
-				data.forEach(file => {
-					if (file.type === 'file' && !file.name.includes('Terminal End Cap') && !file.name.includes('Terminal End Stop Clamp - Left') && !file.name.includes('Terminal End Stop Clamp - Right')) {
-						const img = document.createElement('img');
-						img.src = file.download_url;
-						img.crossOrigin = "anonymous"; 
-						img.addEventListener('click', () => addImageToCanvas(img.src));
-						imageContainer.appendChild(img);
-					}
-				});
-			});
-
-        function addImageToCanvas(src) {
-            undoStack.push(canvas.toDataURL());
-            redoStack.length = 0; 
-            const tempImg = new Image();
-            tempImg.src = src;
-            tempImg.crossOrigin = "anonymous"; 
-            tempImg.onload = () => {
-                let x, y;
-
-                const dinCount = imagesOnCanvas.filter(image => !image.img.src.includes("Terminal%20End%20Cap.png") && !image.img.src.includes("Terminal%20End%20Stop%20Clamp%20-%20Right.png")).length;
-
-                if (firstDINAdded) {
-                    if (dinCount === 1) {
-                        x = secondDINPosition.x;
-                        y = secondDINPosition.y;
-                    } else {
-                        x = firstDINPosition.x + subsequentOffsets.x * (dinCount - 1);
-                        y = firstDINPosition.y + subsequentOffsets.y * (dinCount - 1);
-                    }
-                } else {
-                    x = initialOffsets.x;
-                    y = initialOffsets.y;
-                    firstDINPosition = { x, y };
-                    firstDINAdded = true;
-                }
-
-                const zIndex = src.includes("Terminal%20End%20Stop%20Clamp%20-%20Left.png") ? 1 : 2;
-
-                imagesOnCanvas.push({ img: tempImg, x, y, width: tempImg.width, height: tempImg.height, zIndex });
-                redrawCanvas();
-
-                if (endCapAdded) {
-                    repositionEndCap(x, y);
-                } else {
-                    addEndCap(x, y);
-                    endCapAdded = true;
-                }
-
-                if (endStopClampRightAdded) {
-                    repositionEndStopClampRight(x, y);
-                } else {
-                    addEndStopClampRight(x, y);
-                    endStopClampRightAdded = true;
-                }
-            };
-        }
-
-        function addEndCap(lastDINX, lastDINY) {
-            const endCapSrc = "https://raw.githubusercontent.com/willholdsworth/Terminal-Kit-Creator/main/IMAGES/Terminal%20End%20Cap.png";
-            const endCapImg = new Image();
-            endCapImg.src = endCapSrc;
-            endCapImg.crossOrigin = "anonymous";
-            endCapImg.onload = () => {
-                const x = lastDINX + endCapOffset.x;
-                const y = lastDINY + endCapOffset.y;
-                imagesOnCanvas.push({ img: endCapImg, x, y, width: endCapImg.width, height: endCapImg.height, zIndex: 4 });
-                redrawCanvas();
-            };
-        }
-
-        function repositionEndCap(lastDINX, lastDINY) {
-            const x = lastDINX + endCapOffset.x;
-            const y = lastDINY + endCapOffset.y;
-
-            const endCapIndex = imagesOnCanvas.findIndex(image => image.img.src.includes("Terminal%20End%20Cap.png"));
-            if (endCapIndex !== -1) {
-                imagesOnCanvas[endCapIndex].x = x;
-                imagesOnCanvas[endCapIndex].y = y;
-                redrawCanvas();
-            }
-        }
-
-        function addEndStopClampRight(lastDINX, lastDINY) {
-            const endStopClampRightSrc = "https://raw.githubusercontent.com/willholdsworth/Terminal-Kit-Creator/main/IMAGES/Terminal%20End%20Stop%20Clamp%20-%20Right.png";
-            const endStopClampRightImg = new Image();
-            endStopClampRightImg.src = endStopClampRightSrc;
-            endStopClampRightImg.crossOrigin = "anonymous";
-            endStopClampRightImg.onload = () => {
-                const x = lastDINX + endCapOffset.x + endStopClampRightOffset.x;
-                const y = lastDINY + endCapOffset.y + endStopClampRightOffset.y;
-                imagesOnCanvas.push({ img: endStopClampRightImg, x, y, width: endStopClampRightImg.width, height: endStopClampRightImg.height, zIndex: 5 });
-                redrawCanvas();
-            };
-        }
-
-        function repositionEndStopClampRight(lastDINX, lastDINY) {
-            const x = lastDINX + endCapOffset.x + endStopClampRightOffset.x;
-            const y = lastDINY + endCapOffset.y + endStopClampRightOffset.y;
-
-            const endStopClampRightIndex = imagesOnCanvas.findIndex(image => image.img.src.includes("Terminal%20End%20Stop%20Clamp%20-%20Right.png"));
-            if (endStopClampRightIndex !== -1) {
-                imagesOnCanvas[endStopClampRightIndex].x = x;
-                imagesOnCanvas[endStopClampRightIndex].y = y;
-                redrawCanvas();
-            }
-        }
-
-        function redrawCanvas() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height); 
-
-            const boundingBox = imagesOnCanvas.reduce((box, { x, y, width, height }) => {
-                return {
-                    left: Math.min(box.left, x),
-                    top: Math.min(box.top, y),
-                    right: Math.max(box.right, x + width),
-                    bottom: Math.max(box.bottom, y + height)
-                };
-            }, { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
-
-            const boxWidth = boundingBox.right - boundingBox.left;
-            const boxHeight = boundingBox.bottom - boundingBox.top;
-
-            const scaleFactor = Math.min(canvas.width / boxWidth, canvas.height / boxHeight);
-
-            const centerX = (canvas.width - boxWidth * scaleFactor) / 2;
-            const centerY = (canvas.height - boxHeight * scaleFactor) / 2;
-
-            imagesOnCanvas.sort((a, b) => a.zIndex - b.zIndex).forEach(({ img, x, y, width, height }) => {
-                const scaledX = centerX + (x - boundingBox.left) * scaleFactor;
-                const scaledY = centerY + (y - boundingBox.top) * scaleFactor;
-                const scaledWidth = width * scaleFactor;
-                const scaledHeight = height * scaleFactor;
-                ctx.drawImage(img, scaledX, scaledY, scaledWidth, scaledHeight);
+        if (conflictingJumpers.length > 0) {
+            const swapGroup = [lastJumper, ...conflictingJumpers];
+            const swapData = swapGroup.map(jumper => {
+                const type = jumper.img.src.includes("2%20Pole%20Jumper.png") ? '2Pole' : '4Pole';
+                const currPos = jumper.y === (jumper.baseY + jumperOffsets[type].position1.y) ? 'position1' : 'position2';
+                const newPos = currPos === 'position1' ? 'position2' : 'position1';
+                const newX = jumper.baseX + jumperOffsets[type][newPos].x;
+                const newY = jumper.baseY + jumperOffsets[type][newPos].y;
+                return { jumper, newX, newY, newPosition: newPos };
             });
-        }
 
-        function undo() {
-            if (undoStack.length > 0) {
-                redoStack.push(canvas.toDataURL());
-                const lastState = undoStack.pop();
-                const img = new Image();
-                img.src = lastState;
-                img.onload = () => {
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    ctx.drawImage(img, 0, 0);
-                };
+            const canSwap = swapData.every(data => canPlaceJumper(data.jumper.slots, data.newPosition, swapGroup));
+
+            if (canSwap) {
+                swapData.forEach(data => {
+                    data.jumper.x = data.newX;
+                    data.jumper.y = data.newY;
+                    data.jumper.zIndex = data.newPosition === 'position1' ? 3 : 4;
+                });
+            } else {
+                alert("Cannot invert jumper; swapping would cause conflicts with other jumpers.");
+                return;
             }
+        } else {
+            alert("Cannot invert jumper; the opposite rail is occupied for these slots.");
+            return;
+        }
+    }
+
+    redrawCanvas();
+    updateJumperAvailability();
+}
+
+function addEndCap(lastDINX, lastDINY) {
+    const endCapSrc = "https://raw.githubusercontent.com/willholdsworth/Terminal-Kit-Creator/main/IMAGES/Terminal%20End%20Cap.png";
+    const endCapImg = new Image();
+    endCapImg.src = endCapSrc;
+    endCapImg.crossOrigin = "anonymous";
+    endCapImg.onload = () => {
+        const x = lastDINX + endCapOffset.x;
+        const y = lastDINY + endCapOffset.y;
+        imagesOnCanvas.push({ img: endCapImg, x, y, width: endCapImg.width, height: endCapImg.height, zIndex: 5 });
+        redrawCanvas();
+    };
+}
+
+function repositionEndCap(lastDINX, lastDINY) {
+    const x = lastDINX + endCapOffset.x;
+    const y = lastDINY + endCapOffset.y;
+    const endCapIndex = imagesOnCanvas.findIndex(image => image.img.src.includes("Terminal%20End%20Cap.png"));
+    if (endCapIndex !== -1) {
+        imagesOnCanvas[endCapIndex].x = x;
+        imagesOnCanvas[endCapIndex].y = y;
+        redrawCanvas();
+    }
+}
+
+function addEndStopClampRight(lastDINX, lastDINY) {
+    const endStopClampRightSrc = "https://raw.githubusercontent.com/willholdsworth/Terminal-Kit-Creator/main/IMAGES/Terminal%20End%20Stop%20Clamp%20-%20Right.png";
+    const endStopClampRightImg = new Image();
+    endStopClampRightImg.src = endStopClampRightSrc;
+    endStopClampRightImg.crossOrigin = "anonymous";
+    endStopClampRightImg.onload = () => {
+        const x = lastDINX + endCapOffset.x + endStopClampRightOffset.x;
+        const y = lastDINY + endCapOffset.y + endStopClampRightOffset.y;
+        imagesOnCanvas.push({ img: endStopClampRightImg, x, y, width: endStopClampRightImg.width, height: endStopClampRightImg.height, zIndex: 6 });
+        redrawCanvas();
+    };
+}
+
+function repositionEndStopClampRight(lastDINX, lastDINY) {
+    const x = lastDINX + endCapOffset.x + endStopClampRightOffset.x;
+    const y = lastDINY + endCapOffset.y + endStopClampRightOffset.y;
+    const endStopClampRightIndex = imagesOnCanvas.findIndex(image => image.img.src.includes("Terminal%20End%20Stop%20Clamp%20-%20Right.png"));
+    if (endStopClampRightIndex !== -1) {
+        imagesOnCanvas[endStopClampRightIndex].x = x;
+        imagesOnCanvas[endStopClampRightIndex].y = y;
+        redrawCanvas();
+    };
+}
+
+function redrawCanvas() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height); 
+    const nonJumperImages = imagesOnCanvas.filter(image => !image.img.src.includes("Pole%20Jumper.png"));
+    const boundingBox = nonJumperImages.reduce((box, { x, y, width, height }) => {
+        return {
+            left: Math.min(box.left, x),
+            top: Math.min(box.top, y),
+            right: Math.max(box.right, x + width),
+            bottom: Math.max(box.bottom, y + height)
+        };
+    }, { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
+
+    const boxWidth = boundingBox.right - boundingBox.left;
+    const boxHeight = boundingBox.bottom - boundingBox.top;
+
+    const scaleFactor = Math.min(canvas.width / boxWidth, canvas.height / boxHeight);
+
+    const centerX = (canvas.width - boxWidth * scaleFactor) / 2;
+    const centerY = (canvas.height - boxHeight * scaleFactor) / 2;
+
+    imagesOnCanvas.sort((a, b) => a.zIndex - b.zIndex).forEach(({ img, x, y, width, height }) => {
+        const scaledX = centerX + (x - boundingBox.left) * scaleFactor;
+        const scaledY = centerY + (y - boundingBox.top) * scaleFactor;
+        const scaledWidth = width * scaleFactor;
+        const scaledHeight = height * scaleFactor;
+        ctx.drawImage(img, scaledX, scaledY, scaledWidth, scaledHeight);
+    });
+}
+
+function cloneState(imagesArray, endCapFlag, endStopClampRightFlag, firstDINFlag, firstDINPos) {
+    return {
+        images: imagesArray.map(item => ({ ...item, img: item.img })),
+        endCapAdded: endCapFlag,
+        endStopClampRightAdded: endStopClampRightFlag,
+        firstDINAdded: firstDINFlag,
+        firstDINPosition: { ...firstDINPos }
+    };
+}
+
+function undo() {
+    if (undoStack.length > 0) {
+        redoStack.push(cloneState(imagesOnCanvas, endCapAdded, endStopClampRightAdded, firstDINAdded, firstDINPosition));
+        const previousState = undoStack.pop();
+        imagesOnCanvas.length = 0;
+        imagesOnCanvas.push(...previousState.images);
+        endCapAdded = previousState.endCapAdded;
+        endStopClampRightAdded = previousState.endStopClampRightAdded;
+        firstDINAdded = previousState.firstDINAdded;
+        firstDINPosition = { ...previousState.firstDINPosition };
+
+        const dinCount = imagesOnCanvas.filter(image => 
+            !image.img.src.includes("Terminal%20End%20Cap.png") && 
+            !image.img.src.includes("Terminal%20End%20Stop%20Clamp%20-%20Right.png") &&
+            !image.img.src.includes("Pole%20Jumper.png")
+        ).length;
+        if (dinCount === 0) {
+            firstDINAdded = false;
+            firstDINPosition = { x: 0, y: 0 };
         }
 
-        function redo() {
-            if (redoStack.length > 0) {
-                undoStack.push(canvas.toDataURL());
-                const nextState = redoStack.pop();
-                const img = new Image();
-                img.src = nextState;
-                img.onload = () => {
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    ctx.drawImage(img, 0, 0);
-                };
-            }
+        redrawCanvas();
+        updateJumperAvailability();
+    }
+}
+
+function redo() {
+    if (redoStack.length > 0) {
+        undoStack.push(cloneState(imagesOnCanvas, endCapAdded, endStopClampRightAdded, firstDINAdded, firstDINPosition));
+        const nextState = redoStack.pop();
+        imagesOnCanvas.length = 0;
+        imagesOnCanvas.push(...nextState.images);
+        endCapAdded = nextState.endCapAdded;
+        endStopClampRightAdded = nextState.endStopClampRightAdded;
+        firstDINAdded = nextState.firstDINAdded;
+        firstDINPosition = { ...nextState.firstDINPosition };
+
+        const dinCount = imagesOnCanvas.filter(image => 
+            !image.img.src.includes("Terminal%20End%20Cap.png") && 
+            !image.img.src.includes("Terminal%20End%20Stop%20Clamp%20-%20Right.png") &&
+            !image.img.src.includes("Pole%20Jumper.png")
+        ).length;
+        if (dinCount === 0) {
+            firstDINAdded = false;
+            firstDINPosition = { x: 0, y: 0 };
         }
 
-        document.getElementById('undo').addEventListener('click', undo);
-        document.getElementById('redo').addEventListener('click', redo);
+        redrawCanvas();
+        updateJumperAvailability();
+    }
+}
 
-        document.getElementById('export').addEventListener('click', () => {
-            const link = document.createElement('a');
-            link.download = 'terminal-kit.png';
-            link.href = canvas.toDataURL();
-            link.click();
-        });
+document.getElementById('undo').addEventListener('click', undo);
+document.getElementById('redo').addEventListener('click', redo);
+document.getElementById('invert').addEventListener('click', invertJumperPosition);
+
+document.getElementById('export').addEventListener('click', () => {
+    const link = document.createElement('a');
+    link.download = 'terminal-kit.png';
+    link.href = canvas.toDataURL();
+    link.click();
+});
     </script>
 </body>
 </html>
