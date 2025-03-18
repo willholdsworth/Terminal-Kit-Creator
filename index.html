@@ -14,9 +14,9 @@
         .image-container {
             display: flex;
             flex-wrap: wrap;
+            justify-content: center;
             width: 90%;
             margin-bottom: 20px;
-            border: 1px solid #ccc;
             min-height: 100px;
             box-sizing: border-box;
         }
@@ -71,19 +71,26 @@
         button:active {
             background-color: darkgray;
         }
+
+        @media (max-width: 600px) {
+            .image-container img {
+                width: 75px;
+                height: 75px;
+            }
+        }
     </style>
 </head>
 <body>
-    <div class="image-container">
-    </div>
-    <div class="canvas-container">
-        <canvas id="canvas" width="1000" height="1000"></canvas>
-    </div>
     <div class="button-container">
         <button id="invert">Invert Jumper Position 🔀</button>
         <button id="undo">⏪ UNDO</button>
         <button id="redo">REDO ⏩</button>
         <button id="export">Export as PNG 📥</button>
+    </div>
+    <div class="image-container">
+    </div>
+    <div class="canvas-container">
+        <canvas id="canvas" width="1000" height="1000"></canvas>
     </div>
     <script>
 const imageContainer = document.querySelector('.image-container');
