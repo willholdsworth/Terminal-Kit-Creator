@@ -16,19 +16,16 @@
             flex-wrap: wrap;
             width: 90%;
             margin-bottom: 20px;
+            border: 1px solid #ccc;
             min-height: 100px;
             box-sizing: border-box;
         }
 
         .image-container img {
-            max-width: 100px;
-            max-height: 100px;
+            width: 100px;
+            height: 100px;
             margin: 5px;
             cursor: pointer;
-            min-width: 75px;
-            max-width: 100px;
-            min-height: 75px;
-            max-height: 100px;
         }
 
         .canvas-container {
@@ -57,7 +54,6 @@
         button {
             width: 150px;
             padding: 9px;
-            margin: 5px;
             background-color: black;
             color: white;
             border-radius: 23px;
@@ -83,10 +79,12 @@
     <div class="canvas-container">
         <canvas id="canvas" width="1000" height="1000"></canvas>
     </div>
-	<button id="invert">Invert Jumper Position 🔀</button>
-	<button id="undo">⏪ UNDO</button>
-	<button id="redo">REDO ⏩</button>
-	<button id="export">Export as PNG 📥</button>
+    <div class="button-container">
+        <button id="invert">Invert Jumper Position 🔀</button>
+        <button id="undo">⏪ UNDO</button>
+        <button id="redo">REDO ⏩</button>
+        <button id="export">Export as PNG 📥</button>
+    </div>
     <script>
 const imageContainer = document.querySelector('.image-container');
 const canvas = document.getElementById('canvas');
