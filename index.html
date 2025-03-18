@@ -41,8 +41,24 @@
             border: 1px solid #000;
         }
 	button {
-		padding: 5px;
-		margin: 5px;
+	    padding: 5px;
+	    margin: 5px;
+	    background-color: black;
+	    color: white;
+	    border-radius: 5px; 
+	    border: none; 
+	    transition: background-color 0.3s ease, border 0.3s ease; 
+	}
+	
+	button:hover {
+	    background-color: lightgray;
+	    color: black;
+	    border: 1px solid black;
+	    cursor: pointer; 
+	}
+	
+	button:active {
+	  background-color: darkgray; 
 	}
     </style>
 </head>
