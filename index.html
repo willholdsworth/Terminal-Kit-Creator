@@ -16,21 +16,19 @@
             flex-wrap: wrap;
             width: 90%;
             margin-bottom: 20px;
-            border: 1px solid #ccc;
             min-height: 100px;
-		justify-content: center;
             box-sizing: border-box;
         }
 
         .image-container img {
             max-width: 100px;
             max-height: 100px;
-            margin: -5px;
+            margin: 5px;
             cursor: pointer;
-		min-width: 75px;
-            	max-width: 100px;
-          	min-height: 75px;
-          	max-height: 100px;	
+            min-width: 75px;
+            max-width: 100px;
+            min-height: 75px;
+            max-height: 100px;
         }
 
         .canvas-container {
@@ -48,7 +46,16 @@
             border: 1px solid #000;
         }
 
+        .button-container {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            width: 100%;
+            margin-top: 20px;
+        }
+
         button {
+            width: 150px;
             padding: 9px;
             margin: 5px;
             background-color: black;
