@@ -100,6 +100,7 @@ const ctx = canvas.getContext('2d');
 const undoStack = [];
 const redoStack = [];
 const imagesOnCanvas = [];
+const jumpers = [];
 const initialOffsets = { x: 308, y: -114 }; 
 const subsequentOffsets = { x: 130, y: 51 }; 
 const endCapOffset = { x: 32, y: -90 }; 
@@ -138,8 +139,15 @@ preloadedImages.forEach((src, index) => {
 });
 
 fetch('https://api.github.com/repos/willholdsworth/Terminal-Kit-Creator/contents/IMAGES')
-    .then(response => response.json())
+    .then(response => {
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        return response.json();
+    })
     .then(data => {
+        if (!Array.isArray(data)) {
+            console.error('Expected an array but got:', data);
+            return;
+        }
         data.forEach(file => {
             if (file.type === 'file' && 
                 !file.name.includes('Terminal End Cap') && 
@@ -153,17 +161,17 @@ fetch('https://api.github.com/repos/willholdsworth/Terminal-Kit-Creator/contents
                 imageContainer.appendChild(img);
             }
         });
-        updateJumperAvailability();
-    });
+    })
+    .catch(error => console.error('Error fetching images:', error));
 
 function addImageToCanvas(src) {
-    undoStack.push(cloneState(imagesOnCanvas, endCapAdded, endStopClampRightAdded, firstDINAdded, firstDINPosition));
+    undoStack.push(cloneState(imagesOnCanvas, endCapAdded, endStopClampRightAdded, firstDINAdded, firstDINPosition, jumpers));
     redoStack.length = 0;
     const tempImg = new Image();
     tempImg.src = src;
     tempImg.crossOrigin = "anonymous";
     tempImg.onload = () => {
-        let x, y, zIndex, position = null, baseX = null, baseY = null, slots = null;
+        let x, y, zIndex, position = 'position1', baseX = null, baseY = null, slots = null;
 
         const dinCount = imagesOnCanvas.filter(image => 
             !image.img.src.includes("Terminal%20End%20Cap.png") && 
@@ -192,25 +200,33 @@ function addImageToCanvas(src) {
             baseY = startTerminal.y + subsequentOffsets.y * (lastDINIndex - terminalSpan + 1);
             slots = Array.from({ length: terminalSpan }, (_, i) => lastDINIndex - terminalSpan + 1 + i);
 
-            position = 'position1';
-            const lastJumper = imagesOnCanvas.filter(img => img.img.src.includes("Pole%20Jumper.png")).pop();
-            if (!lastJumper) position = 'position1'; // Default to Position 1 for first jumper
-            else {
-                const lastPosition = lastJumper.y === (lastJumper.baseY + jumperOffsets[jumperType].position1.y) ? 'position1' : 'position2';
-                position = lastPosition === 'position1' ? 'position2' : 'position1';
-            }
-
-            if (!canPlaceJumper(slots, position)) {
-                position = position === 'position1' ? 'position2' : 'position1';
-                if (!canPlaceJumper(slots, position)) {
-                    alert(`Cannot place ${is2Pole ? '2' : '4'} Pole Jumper; both tracks are occupied for these slots.`);
-                    return;
-                }
-            }
-
             x = baseX + jumperOffsets[jumperType][position].x;
             y = baseY + jumperOffsets[jumperType][position].y;
-            zIndex = position === 'position1' ? 3 : 4;
+            zIndex = 3;
+
+            const newJumper = { 
+                img: tempImg, 
+                x, 
+                y, 
+                width: tempImg.width, 
+                height: tempImg.height, 
+                zIndex, 
+                baseX, 
+                baseY, 
+                type: jumperType,
+                slots,
+                position
+            };
+
+            if (checkOverlap(newJumper)) {
+                newJumper.position = 'position2';
+                newJumper.x = baseX + jumperOffsets[jumperType].position2.x;
+                newJumper.y = baseY + jumperOffsets[jumperType].position2.y;
+                newJumper.zIndex = 4;
+            }
+
+            jumpers.push(newJumper);
+            imagesOnCanvas.push(newJumper);
         } else {
             if (firstDINAdded) {
                 if (dinCount === 1) {
@@ -233,150 +249,51 @@ function addImageToCanvas(src) {
 
             if (endStopClampRightAdded) repositionEndStopClampRight(x, y);
             else { addEndStopClampRight(x, y); endStopClampRightAdded = true; }
+
+            imagesOnCanvas.push({ img: tempImg, x, y, width: tempImg.width, height: tempImg.height, zIndex });
         }
 
-        imagesOnCanvas.push({ 
-            img: tempImg, 
-            x, 
-            y, 
-            width: tempImg.width, 
-            height: tempImg.height, 
-            zIndex, 
-            ...(position ? { baseX, baseY, slots } : {})
-        });
         redrawCanvas();
-        updateJumperAvailability();
     };
 }
 
-function canPlaceJumper(slots, position, excludeJumpers = []) {
-    const excludes = Array.isArray(excludeJumpers) ? excludeJumpers : [excludeJumpers];
-    return !imagesOnCanvas.some(img => 
-        !excludes.includes(img) &&
-        img.img.src.includes("Pole%20Jumper.png") &&
-        img.slots.some(slot => slots.includes(slot)) &&
-        ((position === 'position1' && img.y === (img.baseY + jumperOffsets[img.img.src.includes("2%20Pole") ? '2Pole' : '4Pole'].position1.y)) ||
-         (position === 'position2' && img.y === (img.baseY + jumperOffsets[img.img.src.includes("2%20Pole") ? '2Pole' : '4Pole'].position2.y)))
-    );
-}
-
-function updateJumperAvailability() {
-    const dinCount = imagesOnCanvas.filter(image => 
-        !image.img.src.includes("Terminal%20End%20Cap.png") && 
-        !image.img.src.includes("Terminal%20End%20Stop%20Clamp%20-%20Right.png") &&
-        !image.img.src.includes("Pole%20Jumper.png")
-    ).length;
-
-    const jumperImages = imageContainer.querySelectorAll('img[data-type="2Pole"], img[data-type="4Pole"]');
-    jumperImages.forEach(img => {
-        const is2Pole = img.dataset.type === '2Pole';
-        const minTerminals = is2Pole ? 2 : 4;
-        if (dinCount < minTerminals) {
-            img.style.filter = 'grayscale(100%)';
-            img.style.pointerEvents = 'none';
-            return;
-        }
-
-        const lastDINIndex = dinCount - 1;
-        const slots = Array.from({ length: minTerminals }, (_, i) => lastDINIndex - minTerminals + 1 + i);
-        const canPlacePos1 = canPlaceJumper(slots, 'position1');
-        const canPlacePos2 = canPlaceJumper(slots, 'position2');
-
-        if (!canPlacePos1 && !canPlacePos2) {
-            img.style.filter = 'grayscale(100%)';
-            img.style.pointerEvents = 'none';
-        } else {
-            img.style.filter = 'none';
-            img.style.pointerEvents = 'auto';
-        }
-    });
-}
-
-
-function getPosition(jumper) {
-    const type = jumper.img.src.includes("2%20Pole") ? '2Pole' : '4Pole';
-    if (jumper.y === jumper.baseY + jumperOffsets[type].position1.y) {
-        return 'position1';
-    } else if (jumper.y === jumper.baseY + jumperOffsets[type].position2.y) {
-        return 'position2';
-    }
-    return null; 
-}
-
-function findConflictingJumpers(position, slots) {
-    return imagesOnCanvas.filter(j => 
-        j.img.src.includes("Pole%20Jumper.png") &&
-        getPosition(j) === position &&
-        j.slots.some(slot => slots.includes(slot))
+function checkOverlap(jumper) {
+    return jumpers.some(existing => 
+        existing !== jumper &&
+        existing.slots.some(slot => jumper.slots.includes(slot)) &&
+        existing.position === jumper.position
     );
 }
 
 function invertJumper(jumper) {
-    const type = jumper.img.src.includes("2%20Pole") ? '2Pole' : '4Pole';
-    const currentPosition = getPosition(jumper);
-    const newPosition = currentPosition === 'position1' ? 'position2' : 'position1';
-    jumper.x = jumper.baseX + jumperOffsets[type][newPosition].x;
-    jumper.y = jumper.baseY + jumperOffsets[type][newPosition].y;
+    const newPosition = jumper.position === 'position1' ? 'position2' : 'position1';
+    jumper.position = newPosition;
+    jumper.x = jumper.baseX + jumperOffsets[jumper.type][newPosition].x;
+    jumper.y = jumper.baseY + jumperOffsets[jumper.type][newPosition].y;
     jumper.zIndex = newPosition === 'position1' ? 3 : 4;
 }
 
 function invertJumperPosition() {
-    const jumpers = imagesOnCanvas.filter(img => img.img.src.includes("Pole%20Jumper.png"));
     if (jumpers.length === 0) return;
 
-    undoStack.push(cloneState(imagesOnCanvas, endCapAdded, endStopClampRightAdded, firstDINAdded, firstDINPosition));
+    undoStack.push(cloneState(imagesOnCanvas, endCapAdded, endStopClampRightAdded, firstDINAdded, firstDINPosition, jumpers));
     redoStack.length = 0;
 
     const lastJumper = jumpers[jumpers.length - 1];
-    const jumperType = lastJumper.img.src.includes("2%20Pole%20Jumper.png") ? '2Pole' : '4Pole';
-    const currentPosition = lastJumper.y === (lastJumper.baseY + jumperOffsets[jumperType].position1.y) ? 'position1' : 'position2';
-    const newPosition = currentPosition === 'position1' ? 'position2' : 'position1';
+    invertJumper(lastJumper);
 
-    const newX = lastJumper.baseX + jumperOffsets[jumperType][newPosition].x;
-    const newY = lastJumper.baseY + jumperOffsets[jumperType][newPosition].y;
-
-    if (canPlaceJumper(lastJumper.slots, newPosition, lastJumper)) {
-        lastJumper.x = newX;
-        lastJumper.y = newY;
-        lastJumper.zIndex = newPosition === 'position1' ? 3 : 4;
-    } else {
-        const conflictingJumpers = jumpers.slice(0, -1).filter(jumper => {
-            const prevJumperType = jumper.img.src.includes("2%20Pole%20Jumper.png") ? '2Pole' : '4Pole';
-            const prevPosition = jumper.y === (jumper.baseY + jumperOffsets[prevJumperType].position1.y) ? 'position1' : 'position2';
-            return prevPosition === newPosition && lastJumper.slots.some(slot => jumper.slots.includes(slot));
-        });
-
-        if (conflictingJumpers.length > 0) {
-            const swapGroup = [lastJumper, ...conflictingJumpers];
-            const swapData = swapGroup.map(jumper => {
-                const type = jumper.img.src.includes("2%20Pole%20Jumper.png") ? '2Pole' : '4Pole';
-                const currPos = jumper.y === (jumper.baseY + jumperOffsets[type].position1.y) ? 'position1' : 'position2';
-                const newPos = currPos === 'position1' ? 'position2' : 'position1';
-                const newX = jumper.baseX + jumperOffsets[type][newPos].x;
-                const newY = jumper.baseY + jumperOffsets[type][newPos].y;
-                return { jumper, newX, newY, newPosition: newPos };
-            });
-
-            const canSwap = swapData.every(data => canPlaceJumper(data.jumper.slots, data.newPosition, swapGroup));
-
-            if (canSwap) {
-                swapData.forEach(data => {
-                    data.jumper.x = data.newX;
-                    data.jumper.y = data.newY;
-                    data.jumper.zIndex = data.newPosition === 'position1' ? 3 : 4;
-                });
-            } else {
-                alert("Cannot invert jumper; swapping would cause conflicts with other jumpers.");
-                return;
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (let i = 0; i < jumpers.length - 1; i++) {
+            if (checkOverlap(jumpers[i])) {
+                invertJumper(jumpers[i]);
+                changed = true;
             }
-        } else {
-            alert("Cannot invert jumper; the opposite rail is occupied for these slots.");
-            return;
         }
     }
 
     redrawCanvas();
-    updateJumperAvailability();
 }
 
 function addEndCap(lastDINX, lastDINY) {
@@ -404,14 +321,14 @@ function repositionEndCap(lastDINX, lastDINY) {
 }
 
 function addEndStopClampRight(lastDINX, lastDINY) {
-    const endStopClampRightSrc = "https://raw.githubusercontent.com/willholdsworth/Terminal-Kit-Creator/main/IMAGES/Terminal%20End%20Stop%20Clamp%20-%20Right.png";
-    const endStopClampRightImg = new Image();
-    endStopClampRightImg.src = endStopClampRightSrc;
-    endStopClampRightImg.crossOrigin = "anonymous";
-    endStopClampRightImg.onload = () => {
+    const endCapSrc = "https://raw.githubusercontent.com/willholdsworth/Terminal-Kit-Creator/main/IMAGES/Terminal%20End%20Stop%20Clamp%20-%20Right.png";
+    const endCapImg = new Image();
+    endCapImg.src = endCapSrc;
+    endCapImg.crossOrigin = "anonymous";
+    endCapImg.onload = () => {
         const x = lastDINX + endCapOffset.x + endStopClampRightOffset.x;
         const y = lastDINY + endCapOffset.y + endStopClampRightOffset.y;
-        imagesOnCanvas.push({ img: endStopClampRightImg, x, y, width: endStopClampRightImg.width, height: endStopClampRightImg.height, zIndex: 6 });
+        imagesOnCanvas.push({ img: endCapImg, x, y, width: endCapImg.width, height: endCapImg.height, zIndex: 6 });
         redrawCanvas();
     };
 }
@@ -424,7 +341,7 @@ function repositionEndStopClampRight(lastDINX, lastDINY) {
         imagesOnCanvas[endStopClampRightIndex].x = x;
         imagesOnCanvas[endStopClampRightIndex].y = y;
         redrawCanvas();
-    };
+    }
 }
 
 function redrawCanvas() {
@@ -456,65 +373,46 @@ function redrawCanvas() {
     });
 }
 
-function cloneState(imagesArray, endCapFlag, endStopClampRightFlag, firstDINFlag, firstDINPos) {
+function cloneState(imagesArray, endCapFlag, endStopClampRightFlag, firstDINFlag, firstDINPos, jumpersArray) {
     return {
         images: imagesArray.map(item => ({ ...item, img: item.img })),
         endCapAdded: endCapFlag,
         endStopClampRightAdded: endStopClampRightFlag,
         firstDINAdded: firstDINFlag,
-        firstDINPosition: { ...firstDINPos }
+        firstDINPosition: { ...firstDINPos },
+        jumpers: jumpersArray.map(item => ({ ...item, img: item.img }))
     };
 }
 
 function undo() {
     if (undoStack.length > 0) {
-        redoStack.push(cloneState(imagesOnCanvas, endCapAdded, endStopClampRightAdded, firstDINAdded, firstDINPosition));
+        redoStack.push(cloneState(imagesOnCanvas, endCapAdded, endStopClampRightAdded, firstDINAdded, firstDINPosition, jumpers));
         const previousState = undoStack.pop();
         imagesOnCanvas.length = 0;
         imagesOnCanvas.push(...previousState.images);
+        jumpers.length = 0;
+        jumpers.push(...previousState.jumpers);
         endCapAdded = previousState.endCapAdded;
         endStopClampRightAdded = previousState.endStopClampRightAdded;
         firstDINAdded = previousState.firstDINAdded;
         firstDINPosition = { ...previousState.firstDINPosition };
-
-        const dinCount = imagesOnCanvas.filter(image => 
-            !image.img.src.includes("Terminal%20End%20Cap.png") && 
-            !image.img.src.includes("Terminal%20End%20Stop%20Clamp%20-%20Right.png") &&
-            !image.img.src.includes("Pole%20Jumper.png")
-        ).length;
-        if (dinCount === 0) {
-            firstDINAdded = false;
-            firstDINPosition = { x: 0, y: 0 };
-        }
-
         redrawCanvas();
-        updateJumperAvailability();
     }
 }
 
 function redo() {
     if (redoStack.length > 0) {
-        undoStack.push(cloneState(imagesOnCanvas, endCapAdded, endStopClampRightAdded, firstDINAdded, firstDINPosition));
+        undoStack.push(cloneState(imagesOnCanvas, endCapAdded, endStopClampRightAdded, firstDINAdded, firstDINPosition, jumpers));
         const nextState = redoStack.pop();
         imagesOnCanvas.length = 0;
         imagesOnCanvas.push(...nextState.images);
+        jumpers.length = 0;
+        jumpers.push(...nextState.jumpers);
         endCapAdded = nextState.endCapAdded;
         endStopClampRightAdded = nextState.endStopClampRightAdded;
         firstDINAdded = nextState.firstDINAdded;
         firstDINPosition = { ...nextState.firstDINPosition };
-
-        const dinCount = imagesOnCanvas.filter(image => 
-            !image.img.src.includes("Terminal%20End%20Cap.png") && 
-            !image.img.src.includes("Terminal%20End%20Stop%20Clamp%20-%20Right.png") &&
-            !image.img.src.includes("Pole%20Jumper.png")
-        ).length;
-        if (dinCount === 0) {
-            firstDINAdded = false;
-            firstDINPosition = { x: 0, y: 0 };
-        }
-
         redrawCanvas();
-        updateJumperAvailability();
     }
 }
 
